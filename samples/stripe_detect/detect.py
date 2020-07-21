@@ -199,6 +199,10 @@ if __name__ == "__main__":
         gen_ds = gen_from_image(os.path.join(dataset, "./imgs/"), os.path.join(dataset, "./gts/"),
                                 nx, ny, net.offset, buffer_size, batch_size)
         model_path = tf.train.latest_checkpoint(log_path)
+        if os.path.isdir(log_path):
+            model_path = tf.train.latest_checkpoint(log_path)
+        else:
+            model_path = log_path
         model.load_weights(model_path)
 
         test_imgs = np.array([img.numpy() for img in gen_ds.images])
