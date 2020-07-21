@@ -9,6 +9,7 @@ import tensorflow as tf
 
 from tensorflow.keras.layers import Conv2D, ReLU, Conv2DTranspose, MaxPool2D, Dropout, Dense
 from tensorflow.keras import Model
+import cv2 as cv
 
 from absl import app
 from absl import flags
@@ -22,12 +23,13 @@ def create_mask(pred_mask):
     pred_mask = pred_mask[..., tf.newaxis]
     return pred_mask
 
-cmp = np.array([[0,0,0], [128,0,0], [0,128,0], [128,128,0], [0,0,128], [128,0,128], [0,128,128]])
+# cmp = np.array([[0,0,0], [128,0,0], [0,128,0], [128,128,0], [0,0,128], [128,0,128], [0,128,128]])
+cmp = np.array([[255,255,255], [128,0,0], [0,128,0], [128,128,0], [0,0,128], [128,0,128], [0,128,128]])
 def store_predictions(fn, model, dataset, offset):
     for images, gts in dataset.take(1):
         # images: n*h*w*C
-        img = tf.cast(images*255, tf.int32)
-        gt = tf.cast(gts, tf.int32)
+        img = tf.cast(images*255, tf.int64)
+        gt = tf.cast(gts, tf.int64)
         ny, nx = img.shape[1:3]
         if offset > 0:
             nx_out = nx - offset * 2
@@ -41,9 +43,13 @@ def store_predictions(fn, model, dataset, offset):
         pred_gt = create_mask(pred_mask)
         pred_gt_rgb = tf.gather(params=cmp, indices=pred_gt[..., 0])
 
-        img_cat = tf.concat((img, gt_rgb, pred_gt_rgb), axis=2)
+        if img.shape[3] == 3:
+            img_cat = tf.concat((img, gt_rgb, pred_gt_rgb), axis=2)
+        elif img.shape[3] == 1:
+            img_cat = tf.concat((tf.concat([img, img, img], axis=-1), gt_rgb, pred_gt_rgb), axis=2)
         img_cat = tf.concat([i for i in img_cat], axis=0)
-    tf.keras.preprocessing.image.save_img(fn, img_cat)
+    # tf.keras.preprocessing.image.save_img(fn, img_cat)
+    cv.imwrite(fn, img_cat.numpy())
 
 def conv_twice(result, filters, size, dropout=0., padding='valid'):
     '''conv 2d twice
@@ -59,7 +65,7 @@ def conv_twice(result, filters, size, dropout=0., padding='valid'):
 
     initializer2 = tf.keras.initializers.he_normal()
     initializer2_b = tf.random_normal_initializer(0.1, 0.02)
-    result.add(Conv2D(filters, size, padding=padding, 
+    result.add(Conv2D(filters, size, padding=padding,
         kernel_initializer=initializer2, bias_initializer=initializer2_b))
     result.add(ReLU())
     return result
@@ -104,9 +110,9 @@ def unet_framework(dropout, n_class, channels=3, layers=3, features_root=16, pad
     self.channels = channels
     self.layers = layers
     """
-    size = 3
+    size = 3 # kernal size
     features = features_root
-    init_size = 128
+    init_size = 572
     size_cur = init_size
     sizes_dw = []
 
@@ -129,14 +135,14 @@ def unet_framework(dropout, n_class, channels=3, layers=3, features_root=16, pad
         if padding=='valid':
             size_cur = ((size_cur - 4)*2) if layer>0 else (size_cur*2)
             sizes_up.append(size_cur)
-    
+
     # output layers netweork
     last_conv = outputlayer(features, size, n_class, dropout, padding)
 
     if padding=='valid':
         size_cur = size_cur - 4
     size_output = size_cur
-    
+
     inputs = tf.keras.Input(shape=[None, None, channels])
     x = inputs
 
@@ -222,8 +228,9 @@ class metric_crop(tf.keras.metrics.Metric):
 
 
 class unet():
-    def __init__(self, dropout, n_class, shape=(None, None, 3), layers=3, features_root=16, padding='valid'):
+    def __init__(self, dropout, n_class, weights=None, shape=(None, None, 3), layers=3, features_root=16, padding='valid'):
         self.ny, self.nx, self.channels = shape[0:3]
+        self.weights = weights
         self.padding = padding
         self.model, self.offset = unet_framework(dropout, n_class, self.channels, layers, features_root, padding)
         self.loss_obj = loss_crop()
@@ -250,6 +257,7 @@ class unet():
                                 steps_per_epoch=steps_per_epoch,
                                 validation_steps=valid_steps,
                                 validation_data=test_dataset,
+                                class_weight=self.weights,
                                 callbacks=[store_callback,
                                 tf.keras.callbacks.ModelCheckpoint(checkpoint_prefix, save_best_only=True, save_weights_only=True, verbose=1),
                                 tensorboard_callback]

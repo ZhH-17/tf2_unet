@@ -20,6 +20,7 @@ from tensorflow.keras import Model
 from absl import app
 from absl import flags
 from unet_model import unet, create_mask
+from unet_predict import stack_imgs
 
 import pdb
 
@@ -100,7 +101,7 @@ if __name__ == "__main__":
     batch_size = 3
     buffer_size = 30
     dropout = 0
-    epochs = 20
+    epochs = 2000
     valid_steps = 1
 
     nx = 572
@@ -109,7 +110,9 @@ if __name__ == "__main__":
     # ny = 1000
 
     n_class = 7
-    net = unet(dropout, n_class, shape=(ny, nx, 3), layers=3, padding='valid')
+    weights = np.array([1., 2., 1.2, 1.3, 1, 20., 6])
+    net = unet(dropout, n_class, weights=weights,
+               shape=(ny, nx, 3), layers=3, padding='valid')
     model = net.model
 
     gen_ds = gen_from_image("./data/cj_right_all.png", "./data/cj_right_all_gt.png", nx, ny, 
@@ -120,7 +123,7 @@ if __name__ == "__main__":
     num_examples = len(gen_ds.images)
     steps_per_epoch =  num_examples // batch_size
 
-    checkpoint_prefix = "training_checkpoints/cp-{epoch:04d}-{val_loss:.2f}.ckpt"
+    checkpoint_prefix = "log_weighted/cp-{epoch:04d}-{val_loss:.2f}.ckpt"
     model_history = net.train(checkpoint_prefix, train_dataset, test_dataset, epochs, steps_per_epoch, valid_steps)
 
     # loss = model_history.history['loss']
